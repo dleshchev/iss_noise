@@ -3,192 +3,227 @@ import matplotlib.pyplot as plt
 
 import time
 from scipy.optimize import least_squares
+from scipy.interpolate import CubicSpline
+from sklearn.model_selection import KFold
 
 
-class Denoising:
+class DenoisePiece:
 
-    def __init__(self, t, x, w=0.05):
+    def __init__(self, t, x, p0, w_base=0.005, F_low=40, F_high=150, fk_0=None):
         self.t = t
         self.x = x
-
-        self.w = w
-
         self.dt = t[1] - t[0]
-        self.n_t = t.size
 
-        self.nptw = np.sum(t < w)  # define number of descrete points in the window
-        if self.nptw % 2 == 0:  # make it odd
-            self.nptw += 1
-
-        self.F = np.fft.fftfreq(self.nptw, d=self.dt)
+        self.npt = t.size
+        self.F = np.fft.fftfreq(self.npt, d=self.dt)
         self.dF = self.F[1] - self.F[0]
+        self.F_low, self.F_high = F_low, F_high
+        if fk_0 is None: self.get_fk_0()
+        else: self.fk_0, self.fk_0_size = fk_0, fk_0.size
 
-        self.p0 = None
-        self.At = None
-        self.kappa = 1e0
 
-    def denoise(self):
 
-        for idx_cen in [16750]:  # mono glitch
-            #        for idx_cen in range(16750-10, 16750+10): # mono glitch
-
-            #        for idx_cen in [18750]: # xanes
-            #        for idx_cen in [2000]: # flat
-            cur_time = time.time_ns()
-            self.choose_piece(idx_cen)
-            self.denoise_piece()
-            print(idx_cen, 'took %.1f' % ((time.time_ns() - cur_time) * 1e-6), 'ms')
-
-    def choose_piece(self, idx_cen):
-        idx1 = np.max((idx_cen - int((self.nptw - 1) / 2), 0))
-        idx2 = np.min((idx_cen + int((self.nptw - 1) / 2 + 1), self.n_t))
-        self.tw_cur = self.t[idx1:idx2]
-        self.xw_cur = self.x[idx1:idx2]
-
-    #        assert self.xw_cur.size == self.tw_cur.size == self.nptw, 'size of selected signal is not sufficient'
-
-    def denoise_piece(self, F_low=20, F_high=200, w_base=0.005):
         self.get_conditioner()
+        self.x = self.condition_piece(self.x)
 
-        plt.figure(99)
+
+        self.p0 = p0
+        # if kappa:
+        #     self.kappa = kappa
+        # else:
+        #     self.kappa = 5e0
+        #
+        # self.ridge = LRidge(self.t, self.kappa)
+
+
+
+    # def cross_validate(self, kappas=None, n_splits=2):
+    #     self.process()
+    #     if not kappas:
+    #         kappas = 10**np.linspace(-1, 1, 11)
+    #     kf = KFold(n_splits=n_splits, random_state=1, shuffle=True)
+    #     gen_error = np.zeros((kappas.size, n_splits))
+    #     # for train_index, test_index in kf.split(self.t):
+    #     print([i for i in kf.split(self.t)][0])
+    #     for train_index, test_index in [[i for i in kf.split(self.t)][0]]:
+    #         t_train, t_test = self.t[train_index], self.t[test_index]
+    #         x_train, x_test = self.x[train_index], self.x[test_index]
+    #         # for kappa in kappas:
+    #         for kappa in [5e0]:
+    #             print('bla')
+    #             dp_cv = DenoisePiece(t_train, x_train, self.p0, kappa, fk_0=self.fk_0)
+    #             dp_cv.process(plotting=True)
+    #
+    #             plt.figure(3)
+    #             plt.subplot(211)
+    #             plt.plot(self.t, self.x, '.-', color=[0.7, 0.7, 0.7])
+
+
+    def optimize(self, kappas=None):
+        # self.process()
+        if not kappas:
+            kappas = np.hstack((10**-3, 10**np.linspace(-1, 1, 105), 10**3))
+
+        rho = np.zeros(kappas.shape)
+        ksi = np.zeros(kappas.shape)
+        for k, kappa in enumerate(kappas):
+            self.kappa = kappa
+            self.process()
+            # rho[k] = np.log10(np.sum((self.x_fit - self.x)**2)) # SE
+            # ksi[k] = np.log10(np.sum((self.ridge.L @ self.x_smooth)**2)) # reg norm
+            rho[k] = (np.sum((self.x_fit - self.x) ** 2))  # SE
+            ksi[k] = (np.sum((self.ridge.L @ self.x_smooth) ** 2))  # reg norm
+
+
+        # drho, dksi = np.diff(np.log(rho)), np.diff(np.log(ksi))
+        # drho, dksi = np.diff(rho), np.diff(ksi)
+        # ddrho, ddksi = np.diff(drho), np.diff(dksi)
+
+        # curvature = 2 * (drho[:-1]*ddksi - ddrho*dksi[:-1]) / (drho[:-1]**2 + dksi[:-1]**2)**1.5
+        # curvature = find_curvature(rho, ksi)
+        # idx = np.argmax(curvature) + 1
+
+        fom = np.sqrt(((rho-rho.min())/(rho.max()-rho.min()))**2 +
+                      ((ksi-ksi.min())/(ksi.max()-ksi.min()))**2)
+        idx = np.argmin(fom)
+
+        plt.figure(4)
         plt.clf()
-        #        plt.plot(self.t, self.x)
-        #        plt.plot(self.tw_cur, self.xw_cur)
+        plt.subplot(211)
+        plt.loglog(rho, ksi, 'k.-')
+        plt.loglog(rho[idx], ksi[idx], 'ro')
+        # plt.plot(rho, ksi, 'k.-')
+        # plt.plot(rho[idx], ksi[idx], 'ro')
 
-        self.xw_cur = self.condition_piece(self.xw_cur)
-        x_base = self.predef_baseline(w_base)
+        plt.subplot(212)
+        # plt.semilogx(kappas[1:-1], curvature, 'k.-')
+        plt.semilogx(kappas, fom, 'k.-')
+        # plt.vlines(kappas[idx], curvature.min(), curvature.max(), colors='r')
+        plt.vlines(kappas[idx], fom.min(), fom.max(), colors='r')
+        # plt.loglog(SE, PN, 'k.-')
 
-        #        plt.plot(self.tw_cur, self.xw_cur, 'k.-')
-        #        plt.plot(self.tw_cur, x_base)
-        #        plt.plot(self.tw_cur, self.xw_cur - x_base)
+        self.kappa = kappas[idx]
+        self.process(plotting=True)
+
+
+
+
+
+
+
+    def process(self, w_base=0.005, plotting=False):
+
 
         if self.p0 is None:
-            self.p0 = self.generate_starting_guess(self.xw_cur - x_base, F_low, F_high)
+            x_base = self.predef_baseline(w_base)
+            self.p0 = self.generate_starting_guess(self.x - x_base)
 
-        self.p0 = least_squares(self.fit_resid_nonparametric, self.p0,
+        self.ridge = LRidge(self.t, self.kappa)
+        self.p = least_squares(self.fit_resid_nonparametric, self.p0,
                                 method='lm', jac=self.fit_resid_nonparametric_jac)['x']
 
-        #        osci = self.oscPart_fix_freq(self.p0)
-        #        bottom = self.get_x_bkg(osci)
-        #        plt.plot(self.tw_cur, bottom + osci, 'r-')
-        #        plt.plot(self.tw_cur, bottom, 'b--')
-
-        osci = self.oscPart_fix_freq(self.p0)
+        osci = self.oscPart_fix_freq(self.p)
         bottom = self.get_x_bkg(osci)
-        self.xw_cur_est = osci + bottom
-        self.xw_cur_optimum = bottom
-        ###
-        ###
-        ###
-        #        result = least_squares(self.fit_resid, self.p0)
-        #        self.p0 = result['x']
-        #        self.xw_cur_est, self.xw_cur_optimum, _ = self.sineSquare_fix_freq(self.p0,
-        #                                                                          full_output=True)
-        self.xw_cur = self.uncondition_piece(self.xw_cur)
-        self.xw_cur_est = self.uncondition_piece(self.xw_cur_est)
-        self.xw_cur_optimum = self.uncondition_piece(self.xw_cur_optimum)
+        self.x_fit = osci + bottom
+        self.x_smooth = bottom
 
-        #
-        #        plt.figure(99)
-        #        plt.clf()
-        #
-        plt.plot(self.tw_cur, self.xw_cur, 'k.-')
-        plt.plot(self.tw_cur, self.xw_cur_est, 'r-')
-        plt.plot(self.tw_cur, self.xw_cur_optimum, 'b--')
+        # self.x = self.uncondition_piece(self.x)
+        # self.x_fit = self.uncondition_piece(self.x_fit)
+        # self.x_smooth = self.uncondition_piece(self.x_smooth)
 
-    #
-    #        plt.xlim(self.tw_cur.min() - self.w/2, self.tw_cur.max() + self.w/2)
-    #        plt.ylim(self.xw_cur.min() - self.flattener.scale*0.5, self.xw_cur.max() + self.flattener.scale*0.5)
+        if plotting:
+            plt.figure(3)
+            plt.clf()
 
-    def predef_baseline(self, w):
-        n_int = int(np.ceil(self.w / w))
-        t_edges = np.linspace(self.tw_cur.min(), self.tw_cur.max(), n_int + 1)
+            plt.subplot(211)
+            plt.plot(self.t, self.x, 'k.-')
+            plt.plot(self.t, self.x_fit, 'r-')
+            plt.plot(self.t, self.x_smooth, 'b--')
+            #
+            plt.subplot(212)
+            # plt.plot(self.fk_0, np.sqrt(self.p0[:self.fk_0_size]**2 + self.p0[self.fk_0_size:]**2), 'k.-')
+            plt.plot(self.fk_0, self.p0[:self.fk_0_size], 'r.-')
+            plt.plot(self.fk_0, self.p0[self.fk_0_size:], 'b.-')
+            # plt.plot(self.fk_0, np.angle(1j*self.p0[:self.fk_0_size] + self.p0[self.fk_0_size:]), 'k.-')
+
+
+    def predef_baseline(self, w_base):
+        n_int = int(np.ceil((self.t.max() - self.t.min()) / w_base))
+        t_edges = np.linspace(self.t.min(), self.t.max(), n_int + 1)
         t_bins = t_edges[:-1] + np.diff(t_edges) / 2
         x_mins = np.zeros(t_bins.shape)
         for i in range(n_int):
-            t_sel = (self.tw_cur >= t_edges[i]) & (self.tw_cur <= t_edges[i + 1])
-            x_mins[i] = self.xw_cur[t_sel].min()
+            t_sel = (self.t >= t_edges[i]) & (self.t <= t_edges[i + 1])
+            x_mins[i] = self.x[t_sel].min()
 
-        #        p = np.polyfit(t_bins, x_base, n_poly)
-        #        p[-1] += -np.mean(x_base) + np.mean(self.xw_cur)
-
-        x_base = interp_spline(self.tw_cur, t_bins, x_mins)
-        x_base += np.percentile(self.xw_cur - x_base, 5)
-
-        #        plt.plot(t_bins, x_mins, 'b.')
-        #        plt.plot(self.tw_cur, x_base, 'r-')
+        x_base = interp_spline(self.t, t_bins, x_mins)
+        x_base += np.percentile(self.x - x_base, 5)
         return x_base
 
+
+
     def get_conditioner(self):
-        offset = self.xw_cur.min()
-        scale = self.xw_cur.max() - self.xw_cur.min()
+        offset = self.x.min()
+        scale = self.x.max() - self.x.min()
         self.flattener = Flattener(scale, offset)
+
+
 
     def condition_piece(self, x):
         return (x - self.flattener.offset) / self.flattener.scale
 
+
+
     def uncondition_piece(self, x):
         return x * self.flattener.scale + self.flattener.offset
 
-    def generate_starting_guess(self, xw, F_low, F_high):
 
-        F_low_actual = self.F[np.argmin(np.abs(self.F - F_low))]
+    def get_fk_0(self):
+        F_low_actual = self.F[np.argmin(np.abs(self.F - self.F_low))]
         if np.isclose(F_low_actual, 0): F_low_actual = self.dF
-        F_high_actual = self.F[np.argmin(np.abs(self.F - F_high))]
+        F_high_actual = self.F[np.argmin(np.abs(self.F - self.F_high))]
 
-        self.fk_0 = np.arange(F_low_actual, F_high_actual, self.dF)
+        self.fk_0 = np.arange(F_low_actual, F_high_actual, self.dF / 2)
         self.fk_0_size = self.fk_0.size
 
-        xw_fft = np.fft.fft(xw) / xw.size / self.fk_0.size
-        amp_k = np.sqrt(np.interp(2 * self.fk_0, self.F, np.abs(xw_fft)) * 4)
-        ph_k = np.interp(2 * self.fk_0, self.F, np.angle(xw_fft)) / 2
+
+
+    def generate_starting_guess(self, x):
+        x_fft = np.fft.fft(x) / x.size / self.fk_0.size
+        amp_k = np.sqrt(np.interp(2 * self.fk_0, self.F, np.abs(x_fft)) * 4)
+        ph_k = np.interp(2 * self.fk_0, self.F, np.angle(x_fft)) / 2
 
         ak_0 = amp_k * np.cos(ph_k)
         bk_0 = -amp_k * np.sin(ph_k)
 
         def resid_loc(p):
-            r = xw - self.oscPart_fix_freq(p)
+            r = x - self.oscPart_fix_freq(p)
             return r
 
         p0 = np.hstack((ak_0, bk_0))
         p0 = least_squares(resid_loc, p0, method='lm', jac=self.fit_resid_nonparametric_jac)['x']
 
-        #        plt.plot(self.tw_cur, self.oscPart_fix_freq(p0))
-
-        ak_0, bk_0 = p0[:self.fk_0_size], p0[self.fk_0_size:]
-
-        #        plt.figure(100)
-        #        plt.clf()
-        #        plt.subplot(211)
-        #        plt.plot(self.fk_0, np.sqrt(ak_0**2 + bk_0**2), 'k.-')
-        #
-        #        plt.subplot(212)
-        #        plt.plot(self.fk_0, ak_0, 'b.-')
-        #        plt.plot(self.fk_0, bk_0, 'r.-')
-
-        #        p0_poly = np.zeros(n_poly+1)
-        #        p0_poly[0] = self.xw_cur.min()
-
-        #        return np.hstack((ak_0, bk_0, p0_poly))
+        # ak_0, bk_0 = p0[:self.fk_0_size], p0[self.fk_0_size:]
         return p0
+
 
     def sineSum(self, pars):
         amps = pars[:self.fk_0_size]
         bmps = pars[self.fk_0_size:]
 
-        x = np.zeros(self.tw_cur.shape)
+        x = np.zeros(self.t.shape)
         for amp, bmp, f in zip(amps, bmps, self.fk_0):
-            x += (amp * np.cos(2 * np.pi * f * self.tw_cur) +
-                  bmp * np.sin(2 * np.pi * f * self.tw_cur))
+            x += (amp * np.cos(2 * np.pi * f * self.t) +
+                  bmp * np.sin(2 * np.pi * f * self.t))
         return x
 
     def oscPart_fix_freq(self, pars):
         return self.sineSum(pars) ** 2
 
     def polyPart(self, pars):
-        x = np.zeros(self.tw_cur.shape)
+        x = np.zeros(self.t.shape)
         for i, p in enumerate(pars):
-            x += p * self.tw_cur ** i
+            x += p * self.t ** i
         return x
 
     def sineSquare_fix_freq(self, pars, full_output=False):
@@ -203,7 +238,7 @@ class Denoising:
             return s_poly + s_osc
 
     def fit_resid(self, p):
-        r = (self.xw_cur - self.sineSquare_fix_freq(p))
+        r = (self.x - self.sineSquare_fix_freq(p))
         #        return np.hstack((r, np.sqrt(np.abs(1e-12*p[self.fk_0_size*2:]))))
         #        return np.hstack((r, 1e-4*p[self.fk_0_size*2:]))
         return r
@@ -211,38 +246,30 @@ class Denoising:
     def fit_resid_nonparametric(self, p):
         x_osc = self.oscPart_fix_freq(p)
         x_bkg = self.get_x_bkg(x_osc)
-        r = x_osc + x_bkg - self.xw_cur
+        r = x_osc + x_bkg - self.x
         return r
 
     def fit_resid_nonparametric_jac(self, p):
-        cos = np.cos(2 * np.pi * self.fk_0[None, :] * self.tw_cur[:, None])
-        sin = np.sin(2 * np.pi * self.fk_0[None, :] * self.tw_cur[:, None])
+        cos = np.cos(2 * np.pi * self.fk_0[None, :] * self.t[:, None])
+        sin = np.sin(2 * np.pi * self.fk_0[None, :] * self.t[:, None])
         j = np.hstack((cos, sin))
         j *= 2 * self.sineSum(p)[:, None]
         return j
 
     def get_x_bkg(self, x_osc):
-        if self.At is None:
-            A = np.eye(x_osc.size)
-            #            L = L2(x_osc.size)
-            L = L1(x_osc.size)
-            self.At = np.vstack((A, self.kappa * L))
-            #            self.bt = np.zeros(x_osc.size*2-2)
-            self.bt = np.zeros(x_osc.size * 2 - 1)
-
-        self.bt[:x_osc.size] = self.xw_cur - x_osc
-        x_bkg, _, _, _ = np.linalg.lstsq(self.At, self.bt, rcond=-1)
+        x_bkg = self.ridge.solve(self.x - x_osc)
         return x_bkg
 
 
+
+
+
 class Flattener:
-    def __init__(self, scale=None, offset=None, x_flattener=None):
+    def __init__(self, scale=None, offset=None):
         self.scale = scale
         self.offset = offset
-        self.x_flattener = x_flattener
 
 
-from scipy.interpolate import CubicSpline
 
 
 def interp_spline(x, xp, fp):
@@ -265,3 +292,115 @@ def L1(N):
         L[i, i] = 1
         L[i, i + 1] = -1
     return L
+
+
+def L1_t(t):
+    N = t.size
+    t_diff = np.diff(t)
+    t_diff /= np.min(t_diff)
+    L = np.zeros((N - 1, N))
+    for i in range(N - 1):
+        L[i, i] = 1
+        L[i, i + 1] = -1
+    return L / t_diff[:, None]
+
+
+
+class LRidge:
+
+    def __init__(self, t, kappa):
+        A = np.eye(t.size)
+        #            L = L2(x_osc.size)
+        self.L = L1_t(t)
+        self.At = np.vstack((A, kappa * self.L))
+        self.bt = np.zeros(t.size * 2 - 1)
+
+
+    def solve(self, b):
+        self.bt[:b.size] = b
+        x, _, _, _ = np.linalg.lstsq(self.At, self.bt, rcond=-1)
+        return x
+
+
+
+def find_curvature(x,y):
+
+    phi = np.linspace(0, 2*np.pi, 361)
+
+    plt.figure(25)
+    plt.clf()
+
+    c = np.zeros(y.size-2)
+    for i in range(1,y.size-1):
+        x1, x2, x3 = x[i-1], x[i], x[i+1]
+        y1, y2, y3 = y[i-1], y[i], y[i+1]
+        r, x0, y0 =  find_circle(x1, y1, x2, y2, x3, y3)
+        c[i - 1] = 1/r
+        plt.plot([x[i-1], x[i], x[i+1]], [y[i-1], y[i], y[i+1]], 'k.')
+        plt.plot(x0 + np.abs(r) * np.cos(phi), y0 + np.abs(r) * np.sin(phi), 'r-')
+
+    return c
+
+
+def find_circle(x1, y1, x2, y2, x3, y3):
+
+    A = np.array([[x2-x1, y2-y1],
+                  [x3-x1, y3-y1]])
+    b = 0.5*np.array([x2**2 - x1**2 + y2**2 - y1**2,
+                      x3**2 - x1**2 + y3**2 - y1**2])
+    center,_,_,_ = np.linalg.lstsq(A, b, rcond=-1)
+    x0, y0 = center
+    r = np.sqrt((x0-x1)**2 +(y0-y1)**2)
+
+    if (x0<x2) & (y0<y2):
+        sgn = -1
+    else:
+        sgn = 1
+    return sgn*r, x0, y0
+
+    # print("Centre = (", h, ", ", k, ")");
+    # print("Radius = ", r);
+
+
+
+class SpectrumDenoising:
+
+    def __init__(self, t, x, w=0.05):
+        self.t = t - t.min()
+        self.x = x
+
+        self.T = t.max()-t.min()
+        self.nw = np.floor(self.T / w)
+
+        self.t_edges = np.linspace(0, self.T, self.nw+1)
+        self.p, self.kappa = None, None
+
+
+
+    def denoise(self):
+
+        # for idx_cen in [16750]:  # mono glitch
+        # for idx_cen in [21730]:  # mono glitch
+            #        for idx_cen in range(16750-10, 16750+10): # mono glitch
+        self.x_smooth = np.zeros(self.x.size)
+        # for i in range(self.nw):
+        for i in [100]:
+            cur_time = time.time_ns()
+            idxs = self.choose_piece(i)
+            # piece = DenoisePiece(self.t[idxs], self.x[idxs], self.p, self.kappa)
+            piece = DenoisePiece(self.t[idxs], self.x[idxs], self.p)
+            # piece.process()
+            piece.optimize()
+            # self.x_smooth[idxs] = piece.x_smooth
+            print(i, 'took %.1f' % ((time.time_ns() - cur_time) * 1e-6), 'ms')
+
+
+    def choose_piece(self, i):
+        return (self.t>=self.t_edges[i]) & (self.t<=self.t_edges[i+1])
+
+
+
+
+
+
+
