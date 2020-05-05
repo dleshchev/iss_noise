@@ -31,6 +31,97 @@ i0_uni = np.interp(t_uni, t[t_sort], i0[t_sort])
 dns = SpectrumDenoising(t_uni, iff_uni)
 dns.denoise()
 
+
+#%%
+
+
+from patsy import dmatrix
+
+vvv = np.linspace(0, 100, 101)
+
+
+bla = dmatrix("bs(x, df=10, degree=3, include_intercept=True) - 1", {"x": vvv})
+
+plt.figure(1)
+plt.clf()
+
+plt.plot(vvv, bla)
+
+#function
+#B = bspline(x,xl, xr, ndx,bdeg)
+#dx = (xr - xl) / ndx;
+#t = xl + dx * [-bdeg:ndx-1];
+#T = (0 * x + 1) * t;
+#X = x * (0 * t + 1);
+#P = (X - T) / dx;
+#B = (T <= X) & (X < (T + dx));
+#r = [2:length(t) 1];
+#for k = 1:bdeg
+#B = (P .* B + (k + 1 - P) .* B(:,r)) / k;
+#end;
+#end;
+
+
+#%%
+
+
+from denoising import interp_spline
+#t_sel = (t_uni>14.5) & (t_uni<15.5)
+t_sel = (t_uni>15.23) & (t_uni<15.24)
+
+def interpolate(t, x, f=10):
+    n = t.size
+    t_pad = np.linspace(t.min(), t.max(), n*f+1)
+    x_pad = interp_spline(t_pad, t, x)
+    return t_pad, x_pad
+#    plt.figure(52)
+#    plt.clf()
+##    plt.plot(np.abs(x_fft))
+##    plt.plot(np.abs(x_fft_pad))
+#    
+#    plt.plot(t, x, 'k.')
+#    plt.plot(t_pad, x_pad, 'r-')
+#
+#interpolate(t_uni[t_sel], iff_uni[t_sel])
+
+def diff_interp(x, n, f=10):
+    t = np.arange(x.size)
+    t_pad, x_pad = interpolate(t, x, f=10)
+    dx_pad = np.diff(x_pad, n)*f**n
+    t_pad_diff = t_pad[n:] - (t_pad[1] - t_pad[0])/2*n
+    
+    return np.interp(t, t_pad_diff, dx_pad)
+#    return dx_pad
+
+
+plt.figure(23)
+plt.clf()
+
+plt.subplot(221)
+plt.plot(t_uni, iff_uni, 'k-')
+plt.plot(t_uni[t_sel], iff_uni[t_sel], 'r-')
+
+plt.subplot(422)
+#plt.plot(t_uni[:-1] + np.diff(t_uni)/2, np.diff(iff_uni), 'k-')
+#plt.plot(t_uni[t_sel][:-1] + np.diff(t_uni[t_sel])/2, np.diff(iff_uni[t_sel]), 'r-')
+plt.plot(np.diff(iff_uni[t_sel],0), 'r-')
+plt.plot(diff_interp(iff_uni[t_sel], 0), 'g--')
+
+
+
+plt.subplot(424)
+plt.plot(np.diff(iff_uni[t_sel], 1), 'r-')
+plt.plot(diff_interp(iff_uni[t_sel], 1), 'g--')
+
+
+plt.subplot(426)
+plt.plot(np.diff(iff_uni[t_sel], 2), 'r-')
+plt.plot(diff_interp(iff_uni[t_sel], 2), 'g--')
+
+plt.subplot(428)
+plt.plot(np.diff(iff_uni[t_sel], 6), 'r-')
+plt.plot(diff_interp(iff_uni[t_sel], 6), 'g--')
+
 #%%
 
 x = np.array([1,4,6])

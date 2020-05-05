@@ -9,7 +9,7 @@ from sklearn.model_selection import KFold
 
 class DenoisePiece:
 
-    def __init__(self, t, x, p0, w_base=0.005, F_low=40, F_high=150, fk_0=None):
+    def __init__(self, t, x, p0, w_base=0.005, F_low=10, F_high=150, fk_0=None):
         self.t = t
         self.x = x
         self.dt = t[1] - t[0]
@@ -21,13 +21,20 @@ class DenoisePiece:
         if fk_0 is None: self.get_fk_0()
         else: self.fk_0, self.fk_0_size = fk_0, fk_0.size
 
-
+        # f_penalty = np.arange(self.dF, 50, self.dF)
+        # print(self.dF, f_penalty)
+        # self.Afft = np.vstack((np.cos(2 * np.pi * f_penalty[:, None] * t[None, :]),
+        #                        np.sin(2 * np.pi * f_penalty[:, None] * t[None, :])))
 
         self.get_conditioner()
         self.x = self.condition_piece(self.x)
 
-
+        self.kappa = 1
+        self.mu = 0.0
         self.p0 = p0
+
+        self.D = L(self.npt, 1)
+
         # if kappa:
         #     self.kappa = kappa
         # else:
@@ -85,24 +92,40 @@ class DenoisePiece:
 
         fom = np.sqrt(((rho-rho.min())/(rho.max()-rho.min()))**2 +
                       ((ksi-ksi.min())/(ksi.max()-ksi.min()))**2)
-        idx = np.argmin(fom)
+        dists = np.diff(np.log(rho))**2 + np.diff(np.log(ksi))**2
+        fom2 = np.sqrt(dists[1:] + dists[:-1])
+
+        idx = np.argmin(fom[1:-1])+1
+        idx2 = np.argmin(fom2)+1
 
         plt.figure(4)
         plt.clf()
         plt.subplot(211)
         plt.loglog(rho, ksi, 'k.-')
         plt.loglog(rho[idx], ksi[idx], 'ro')
+        plt.loglog(rho[idx2], ksi[idx2], 'bo')
         # plt.plot(rho, ksi, 'k.-')
         # plt.plot(rho[idx], ksi[idx], 'ro')
+        # plt.plot(rho[idx2], ksi[idx2], 'bo')
+        plt.xlabel('MSE norm')
+        plt.ylabel('penalty norm')
 
-        plt.subplot(212)
+        plt.subplot(223)
         # plt.semilogx(kappas[1:-1], curvature, 'k.-')
         plt.semilogx(kappas, fom, 'k.-')
         # plt.vlines(kappas[idx], curvature.min(), curvature.max(), colors='r')
         plt.vlines(kappas[idx], fom.min(), fom.max(), colors='r')
+        plt.vlines(kappas[idx2], fom.min(), fom.max(), colors='b')
         # plt.loglog(SE, PN, 'k.-')
 
-        self.kappa = kappas[idx]
+        plt.subplot(224)
+        # plt.semilogx(kappas[1:-1], curvature, 'k.-')
+        plt.semilogx(kappas[2:-2], fom2[1:-1], 'k.-')
+        # plt.vlines(kappas[idx], curvature.min(), curvature.max(), colors='r')
+        plt.vlines(kappas[idx], fom2[1:-1].min(), fom2[1:-1].max(), colors='r')
+        plt.vlines(kappas[idx2], fom2[1:-1].min(), fom2[1:-1].max(), colors='b')
+
+        self.kappa = kappas[idx2]
         self.process(plotting=True)
 
 
@@ -113,14 +136,20 @@ class DenoisePiece:
 
     def process(self, w_base=0.005, plotting=False):
 
+        # if self.kappa is None:
+            # self.kappa = 1
 
         if self.p0 is None:
             x_base = self.predef_baseline(w_base)
             self.p0 = self.generate_starting_guess(self.x - x_base)
 
         self.ridge = LRidge(self.t, self.kappa)
-        self.p = least_squares(self.fit_resid_nonparametric, self.p0,
-                                method='lm', jac=self.fit_resid_nonparametric_jac)['x']
+        # self.p = least_squares(self.fit_resid_nonparametric, self.p0,
+        #                         method='lm', jac=self.fit_resid_nonparametric_jac)['x']
+
+        self.p = least_squares(self.fit_resid_D, self.p0,
+                               method='lm', jac=self.fit_resid_D_jac)['x']
+        # self.p = self.p0
 
         osci = self.oscPart_fix_freq(self.p)
         bottom = self.get_x_bkg(osci)
@@ -135,16 +164,35 @@ class DenoisePiece:
             plt.figure(3)
             plt.clf()
 
-            plt.subplot(211)
+            plt.subplot(221)
             plt.plot(self.t, self.x, 'k.-')
-            plt.plot(self.t, self.x_fit, 'r-')
-            plt.plot(self.t, self.x_smooth, 'b--')
+            # plt.plot(self.t, self.x_fit, 'r-')
+            plt.plot(self.t, osci, 'g--')
+            plt.plot(self.t, self.x - osci, 'b--')
+            # plt.plot(self.t, self.x_smooth, 'b--')
             #
-            plt.subplot(212)
-            # plt.plot(self.fk_0, np.sqrt(self.p0[:self.fk_0_size]**2 + self.p0[self.fk_0_size:]**2), 'k.-')
-            plt.plot(self.fk_0, self.p0[:self.fk_0_size], 'r.-')
-            plt.plot(self.fk_0, self.p0[self.fk_0_size:], 'b.-')
+            plt.subplot(223)
+            plt.plot(self.fk_0, np.sqrt(self.p[:self.fk_0_size]**2 + self.p[self.fk_0_size:]**2), 'k.-')
+            plt.plot(self.fk_0, self.p[:self.fk_0_size], 'r.-')
+            plt.plot(self.fk_0, self.p[self.fk_0_size:], 'b.-')
             # plt.plot(self.fk_0, np.angle(1j*self.p0[:self.fk_0_size] + self.p0[self.fk_0_size:]), 'k.-')
+            # plt.plot(self.t, self.x - osci, 'k.-')
+
+            plt.subplot(422)
+            plt.plot(np.diff(self.x), 'k.-')
+            plt.plot(np.diff(self.x_fit), 'r-')
+            plt.plot(np.diff(osci), 'g-')
+
+            plt.subplot(424)
+            plt.plot(np.diff(self.x, 2), 'k.-')
+            plt.plot(np.diff(self.x_fit, 2), 'r-')
+            plt.plot(np.diff(osci, 2), 'g-')
+
+            plt.subplot(426)
+            plt.plot(np.diff(self.x, 3), 'k.-')
+            plt.plot(np.diff(self.x_fit, 3), 'r-')
+            plt.plot(np.diff(osci, 3), 'g-')
+
 
 
     def predef_baseline(self, w_base):
@@ -197,8 +245,10 @@ class DenoisePiece:
         bk_0 = -amp_k * np.sin(ph_k)
 
         def resid_loc(p):
-            r = x - self.oscPart_fix_freq(p)
+            r = self.oscPart_fix_freq(p) - x
             return r
+            # return np.hstack((r, self.mu * p))
+            # return np.hstack((r, self.mu * (self.Afft @ self.oscPart_fix_freq(p))))
 
         p0 = np.hstack((ak_0, bk_0))
         p0 = least_squares(resid_loc, p0, method='lm', jac=self.fit_resid_nonparametric_jac)['x']
@@ -243,11 +293,24 @@ class DenoisePiece:
         #        return np.hstack((r, 1e-4*p[self.fk_0_size*2:]))
         return r
 
+    def fit_resid_D(self, p):
+        r = self.D @ (self.oscPart_fix_freq(p) - self.x)
+        return r
+
+    def fit_resid_D_jac(self, p):
+        cos = np.cos(2 * np.pi * self.fk_0[None, :] * self.t[:, None])
+        sin = np.sin(2 * np.pi * self.fk_0[None, :] * self.t[:, None])
+        j = np.hstack((cos, sin))
+        j *= 2 * self.sineSum(p)[:, None]
+        return self.D @ j
+
     def fit_resid_nonparametric(self, p):
         x_osc = self.oscPart_fix_freq(p)
         x_bkg = self.get_x_bkg(x_osc)
         r = x_osc + x_bkg - self.x
         return r
+        # return np.hstack((r, self.mu*p))
+        # return np.hstack((r, self.mu*(self.Afft @ x_osc)))
 
     def fit_resid_nonparametric_jac(self, p):
         cos = np.cos(2 * np.pi * self.fk_0[None, :] * self.t[:, None])
@@ -255,6 +318,11 @@ class DenoisePiece:
         j = np.hstack((cos, sin))
         j *= 2 * self.sineSum(p)[:, None]
         return j
+        # return np.vstack((j, self.mu*np.eye(p.size)))
+        # return np.vstack((j, self.mu*(self.Afft @ j)))
+
+
+
 
     def get_x_bkg(self, x_osc):
         x_bkg = self.ridge.solve(self.x - x_osc)
@@ -292,6 +360,15 @@ def L1(N):
         L[i, i] = 1
         L[i, i + 1] = -1
     return L
+
+
+
+def L(N, n):
+    L = np.eye(N)
+    for i in range(0, n):
+        L = L1(N-i) @ L
+    return L
+
 
 
 def L1_t(t):
@@ -384,13 +461,19 @@ class SpectrumDenoising:
             #        for idx_cen in range(16750-10, 16750+10): # mono glitch
         self.x_smooth = np.zeros(self.x.size)
         # for i in range(self.nw):
-        for i in [100]:
+        for i in [85]:
             cur_time = time.time_ns()
             idxs = self.choose_piece(i)
             # piece = DenoisePiece(self.t[idxs], self.x[idxs], self.p, self.kappa)
+            plt.figure(99)
+            plt.clf()
+
+            plt.plot(self.t, self.x, 'k-')
+            plt.plot(self.t[idxs], self.x[idxs], 'r-')
+
             piece = DenoisePiece(self.t[idxs], self.x[idxs], self.p)
-            # piece.process()
-            piece.optimize()
+            piece.process(plotting=True)
+            # piece.optimize()
             # self.x_smooth[idxs] = piece.x_smooth
             print(i, 'took %.1f' % ((time.time_ns() - cur_time) * 1e-6), 'ms')
 
