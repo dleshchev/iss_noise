@@ -9,28 +9,175 @@ from patsy import dmatrix
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 unused import
 
 
+# class NonlinearSemiparametricSolver:
+#     def __init__(self, t, y, _F, _gradF, theta0, dof=4, deg=3, ndiff=2):
+#         assert t.size == y.size, 't and y mist have the same size'
+#
+#         self.t = t
+#         # self.y = y
+#         self.y = (y - y.min())/(y.max() - y.min())
+#         self.m = t.size
+#
+#         self._F = _F
+#         self._gradF = _gradF
+#
+#         self.theta0 = theta0
+#
+#         str_input = f"bs(y, df={dof}, degree={deg}, include_intercept=True) - 1"
+#         self.A = dmatrix(str_input, {"y": t})
+#         self.D = L(dof, ndiff)
+#         # self.D = L(self.m, ndiff) @ self.A
+#
+#         # self.A = np.eye(self.m)
+#         # self.D = L(self.m, ndiff) @ self.A
+#         self.B = self.D.T @ self.D
+#
+#     def F(self, theta):
+#         return self._F(theta, self.t)
+#
+#     def gradF(self, theta):
+#         return self._gradF(theta, self.t)
+#
+#     def y_theta(self, theta):
+#         return self.y - self.F(theta)
+#
+#     def _update_B_kappa(self, kappa):
+#         self._z,_,_,_ = np.linalg.lstsq(self.A.T @ self.A + kappa * self.m * self.B, self.A.T, rcond=-1)
+#         _I = np.eye(self.m)
+#         self.B_kappa = np.vstack(((_I - self.A @ self._z),
+#                                  (np.sqrt(self.m * kappa) * self.D @ self._z)))
+#
+#     def resid_theta(self, theta):
+#         return self.B_kappa @ self.y_theta(theta)
+#
+#     def jac_resid_theta(self, theta):
+#         return -self.B_kappa @ self.gradF(theta)
+#
+#     def solve_kappa(self, kappa):
+#         self._update_B_kappa(kappa)
+#         result = least_squares(self.resid_theta, self.theta0,
+#                                method='lm', jac=self.jac_resid_theta)
+#         theta_kappa = result['x']
+#         a_kappa = self._z @ self.y_theta(theta_kappa)
+#         F_kappa = self.F(theta_kappa)
+#         g_kappa = self.A @ a_kappa
+#         y_kappa = F_kappa + g_kappa
+#
+#         # plt.figure(10)
+#         # plt.clf()
+#         #
+#         # plt.plot(self.t, self.y, 'k.-')
+#         # plt.plot(self.t, y_kappa, 'r-')
+#         # plt.plot(self.t, g_kappa, 'b--')
+#
+#
+#         gradF_kappa = self.gradF(theta_kappa)
+#         T_kappa = np.hstack((gradF_kappa, self.A))
+#
+#
+#         m11 = gradF_kappa.T @ gradF_kappa
+#         m12 = gradF_kappa.T @ self.A
+#         m22 = self.A.T @ self.A + self.m * kappa * self.B
+#         # print(m11.shape, m12.shape)
+#         # print(m12.T.shape, m22.shape)
+#         # self.theta0 = theta_kappa
+#         H_kappa = np.block([[m11,   m12],
+#                             [m12.T, m22]])
+#         S_kappa = T_kappa @ np.linalg.pinv(H_kappa) @ T_kappa.T
+#         GCV_kappa = self.m * np.linalg.norm(y_kappa - self.y)**2 / np.trace(np.eye(self.m) - S_kappa)
+#
+#         return theta_kappa, a_kappa, y_kappa, F_kappa, g_kappa, GCV_kappa
+#
+#
+#     def compute_GCV_grid(self, kappas):
+#         thetas = np.zeros((self.theta0.size, kappas.size))
+#         aas = np.zeros((self.A.shape[1], kappas.size))
+#         GCV = np.zeros(kappas.shape)
+#         ys = np.zeros((self.t.size, kappas.size))
+#         Fs = np.zeros((self.t.size, kappas.size))
+#         gs = np.zeros((self.t.size, kappas.size))
+#         for i, kappa in enumerate(kappas):
+#             thetas[:, i], aas[:, i], ys[:, i], Fs[:, i], gs[:, i], GCV[i] = self.solve_kappa(kappa)
+#
+#         # idx = np.argmin(GCV)
+#         idx = np.argmin(np.sum(Fs**2, axis=0))
+#         plt.figure(10)
+#         plt.clf()
+#
+#         plt.plot(self.t, self.y, 'k.-')
+#         plt.plot(self.t, ys[:, idx], 'r-')
+#         plt.plot(self.t, gs[:, idx], 'b--')
+#
+#         plt.figure(11)
+#         plt.clf()
+#         plt.loglog(kappas, GCV, 'k.-')
+#         plt.vlines(kappas[idx], GCV.min(), GCV.max(), colors='r')
+#
+#         plt.figure(12)
+#         plt.clf()
+#         plt.subplot(321)
+#         plt.plot(self.t, Fs, alpha=0.5)
+#         plt.plot(self.t, Fs[:, idx], 'r')
+#
+#         plt.subplot(322)
+#         plt.imshow(Fs)
+#
+#
+#         jj = int(self.theta0.size/2)
+#
+#         bbb = np.sqrt(thetas[jj:, :]**2 + thetas[:jj, :]**2)
+#         plt.subplot(323)
+#         plt.plot(thetas[:jj, :], alpha=0.5)
+#         plt.plot(thetas[:jj, idx], 'r-')
+#         # plt.plot(thetas[jj:, :], 'b.-')
+#
+#         # plt.plot(bbb, alpha=0.5)
+#         # plt.plot(bbb[:, idx], 'r-')
+#
+#         plt.subplot(324)
+#         # plt.imshow(np.sqrt(thetas[jj:, :]**2 + thetas[:jj, :]**2))
+#         plt.plot(np.sum(Fs**2, axis=0), 'm.-')
+#
+#         plt.subplot(325)
+#         plt.plot(aas, alpha=0.5)
+#         plt.plot(aas[:, idx], 'r')
+#
+#
+#         plt.subplot(326)
+#         plt.semilogy(GCV, 'k.-')
+#         # plt.semilogy(bbb[3, :], 'r.-')
+#         # plt.semilogy(aas[0, :], 'm.-')
+#
+#         # plt.semilogy(np.sum((self.D @ aas)**2, axis=0), 'g.-')
+#         # plt.semilogy(np.sum((ys - self.y[:, None]) ** 2, axis=0), 'b.-')
+#         plt.vlines(idx, GCV.min(), GCV.max(), colors='b')
+
+
+
+
 class NonlinearSemiparametricSolver:
-    def __init__(self, t, y, _F, _gradF, theta0, dof=4, deg=3, ndiff=2):
+    def __init__(self, t, y, _F, _gradF, theta0, dof=5, deg=3, ndiff=2):
         assert t.size == y.size, 't and y mist have the same size'
 
         self.t = t
         # self.y = y
         self.y = (y - y.min())/(y.max() - y.min())
         self.m = t.size
+        self.k = dof - ndiff
 
         self._F = _F
         self._gradF = _gradF
 
         self.theta0 = theta0
 
-        str_input = f"bs(y, df={dof}, degree={deg}, include_intercept=True) - 1"
-        self.A = dmatrix(str_input, {"y": t})
-        self.D = L(dof, ndiff)
-        # self.D = L(self.m, ndiff) @ self.A
+        str_input = f"bs(x, df={dof}, degree={deg}, include_intercept=True) - 1"
+        self.A = dmatrix(str_input, {"x": t})
+        # self.D = L(dof, ndiff)
+        self.D = L(self.m, ndiff) @ self.A
 
         # self.A = np.eye(self.m)
         # self.D = L(self.m, ndiff) @ self.A
-        self.B = self.D.T @ self.D
+        # self.B = self.D.T @ self.D
 
     def F(self, theta):
         return self._F(theta, self.t)
@@ -41,27 +188,43 @@ class NonlinearSemiparametricSolver:
     def y_theta(self, theta):
         return self.y - self.F(theta)
 
-    def _update_B_kappa(self, kappa):
-        self._z,_,_,_ = np.linalg.lstsq(self.A.T @ self.A + kappa * self.m * self.B, self.A.T, rcond=-1)
-        _I = np.eye(self.m)
-        self.B_kappa = np.vstack(((_I - self.A @ self._z),
-                                 (np.sqrt(self.m * kappa) * self.D @ self._z)))
+    def _update_B(self, kappa, mu):
+        self.Apinv,_,_,_ = np.linalg.lstsq(self.A.T @ self.A +  mu * self.D.T @ self.D, self.A.T, rcond=-1)
+        _Im = np.eye(self.m)
+        # _om = np.zeros((self.m, self.m))
+        # self.B_kappa = np.block([[_Im - self.A @ self._z, _om],
+        #                          [_om.T, np.sqrt(self.m * kappa) * _Im]])
+
+        bbb = np.vstack((_Im - self.A @ self.Apinv,
+                         np.sqrt( mu) * (self.D @ self.Apinv)))
+
+        _Ip = np.eye(self.theta0.size)
+        # _Ip = np.eye(self.m)
+        _om_1 = np.zeros((bbb.shape[0], _Ip.shape[1]))
+        _om_2 = np.zeros((_Ip.shape[0], bbb.shape[1]))
+
+
+        # print(bbb.shape, _om_1.shape, _om_2.shape, _Ip.shape)
+        self.B = np.block([[bbb, _om_1],
+                           [_om_2, np.sqrt(kappa) * _Ip]])
 
     def resid_theta(self, theta):
-        return self.B_kappa @ self.y_theta(theta)
+        # return self.B @ np.hstack((self.y_theta(theta), self.F(theta)))
+        return self.B @ np.hstack((self.y_theta(theta), theta))
 
     def jac_resid_theta(self, theta):
-        return -self.B_kappa @ self.gradF(theta)
+        # return self.B @ np.vstack((-self.gradF(theta), self.gradF(theta)))
+        return self.B @ np.vstack((-self.gradF(theta), np.eye(theta.size)))
 
-    def solve_kappa(self, kappa):
-        self._update_B_kappa(kappa)
+    def solve_kappa(self, kappa, mu):
+        self._update_B(kappa, mu)
         result = least_squares(self.resid_theta, self.theta0,
                                method='lm', jac=self.jac_resid_theta)
-        theta_kappa = result['x']
-        a_kappa = self._z @ self.y_theta(theta_kappa)
-        F_kappa = self.F(theta_kappa)
-        g_kappa = self.A @ a_kappa
-        y_kappa = F_kappa + g_kappa
+        theta_solved = result['x']
+        a_solved = self.Apinv @ self.y_theta(theta_solved)
+        F_solved = self.F(theta_solved)
+        g_solved = self.A @ a_solved
+        y_solved = F_solved + g_solved
 
         # plt.figure(10)
         # plt.clf()
@@ -71,86 +234,110 @@ class NonlinearSemiparametricSolver:
         # plt.plot(self.t, g_kappa, 'b--')
 
 
-        gradF_kappa = self.gradF(theta_kappa)
-        T_kappa = np.hstack((gradF_kappa, self.A))
+        gradF_solved = self.gradF(theta_solved)
+        T_solved = np.hstack((gradF_solved, self.A))
 
 
-        m11 = gradF_kappa.T @ gradF_kappa
-        m12 = gradF_kappa.T @ self.A
-        m22 = self.A.T @ self.A + self.m * kappa * self.B
+        # m11 = (gradF_solved.T @ gradF_solved) * (1 + self.m * kappa)
+        m11 = (gradF_solved.T @ gradF_solved) + kappa * np.eye(theta_solved.size)
+        m12 = (gradF_solved.T @ self.A)
+        m22 = self.A.T @ self.A +  mu * self.D.T @ self.D
         # print(m11.shape, m12.shape)
         # print(m12.T.shape, m22.shape)
-        # self.theta0 = theta_kappa
-        H_kappa = np.block([[m11,   m12],
+        self.theta0 = theta_solved
+        H_solved = np.block([[m11,   m12],
                             [m12.T, m22]])
-        S_kappa = T_kappa @ np.linalg.pinv(H_kappa) @ T_kappa.T
-        GCV_kappa = self.m * np.linalg.norm(y_kappa - self.y)**2 / np.trace(np.eye(self.m) - S_kappa)
+        S_solved = T_solved @ np.linalg.pinv(H_solved) @ T_solved.T
+        # S_solved = T_solved @ np.linalg.lstsq(H_solved, T_solved.T, rcond=-1)[0]
+        GCV_solved = self.m * np.linalg.norm(y_solved - self.y)**2 / np.trace(np.eye(self.m) - S_solved)**2
+        dof_eff = np.trace(np.eye(self.m) - S_solved)
+        print(kappa, mu, self.m, np.trace(S_solved), theta_solved.size+a_solved.size, np.linalg.matrix_rank(H_solved))
 
-        return theta_kappa, a_kappa, y_kappa, F_kappa, g_kappa, GCV_kappa
+        return theta_solved, a_solved, y_solved, F_solved, g_solved, GCV_solved, dof_eff
 
 
-    def compute_GCV_grid(self, kappas):
-        thetas = np.zeros((self.theta0.size, kappas.size))
-        aas = np.zeros((self.A.shape[1], kappas.size))
-        GCV = np.zeros(kappas.shape)
-        ys = np.zeros((self.t.size, kappas.size))
-        Fs = np.zeros((self.t.size, kappas.size))
-        gs = np.zeros((self.t.size, kappas.size))
+    def compute_GCV_grid(self, kappas, mus):
+        thetas = np.zeros((self.theta0.size, kappas.size, mus.size))
+        aas = np.zeros((self.A.shape[1], kappas.size, mus.size))
+        GCV = np.zeros((kappas.size, mus.size))
+        dof_eff = np.zeros((kappas.size, mus.size))
+        ys = np.zeros((self.t.size, kappas.size, mus.size))
+        Fs = np.zeros((self.t.size, kappas.size, mus.size))
+        gs = np.zeros((self.t.size, kappas.size, mus.size))
         for i, kappa in enumerate(kappas):
-            thetas[:, i], aas[:, i], ys[:, i], Fs[:, i], gs[:, i], GCV[i] = self.solve_kappa(kappa)
+            for j, mu in enumerate(mus):
+                thetas[:, i, j], aas[:, i, j], ys[:, i, j], Fs[:, i, j], gs[:, i, j], GCV[i, j], dof_eff[i, j] = self.solve_kappa(kappa, mu)
 
         # idx = np.argmin(GCV)
-        idx = np.argmin(np.sum(Fs**2, axis=0))
+        idx = np.unravel_index(np.argmin(GCV, axis=None), GCV.shape)
+        # idx = np.argmin(np.sum(Fs**2, axis=0))
         plt.figure(10)
         plt.clf()
 
         plt.plot(self.t, self.y, 'k.-')
-        plt.plot(self.t, ys[:, idx], 'r-')
-        plt.plot(self.t, gs[:, idx], 'b--')
+        plt.plot(self.t, ys[:, idx[0], idx[1]], 'r-')
+        plt.plot(self.t, gs[:, idx[0], idx[1]], 'b--')
 
         plt.figure(11)
         plt.clf()
+        plt.subplot(211)
         plt.loglog(kappas, GCV, 'k.-')
-        plt.vlines(kappas[idx], GCV.min(), GCV.max(), colors='r')
+        plt.vlines(kappas[idx[0]], GCV.min(), GCV.max(), colors='r')
+
+        plt.subplot(212)
+        plt.loglog(mus, GCV.T, 'k.-')
+        plt.vlines(mus[idx[1]], GCV.min(), GCV.max(), colors='r')
 
         plt.figure(12)
         plt.clf()
         plt.subplot(321)
-        plt.plot(self.t, Fs, alpha=0.5)
-        plt.plot(self.t, Fs[:, idx], 'r')
-
-        plt.subplot(322)
-        plt.imshow(Fs)
-
-
+        plt.plot(self.t, np.reshape(Fs, (self.t.size, mus.size * kappas.size)), alpha=0.5)
+        plt.plot(self.t, Fs[:, idx[0], idx[1]], 'r')
+        #
+        # plt.subplot(322)
+        # plt.imshow(Fs)
+        #
+        #
         jj = int(self.theta0.size/2)
-
-        bbb = np.sqrt(thetas[jj:, :]**2 + thetas[:jj, :]**2)
+        #
+        bbb = np.sqrt(thetas[jj:, :, :]**2 + thetas[:jj, :, :]**2)
         plt.subplot(323)
-        plt.plot(thetas[:jj, :], alpha=0.5)
-        plt.plot(thetas[:jj, idx], 'r-')
-        # plt.plot(thetas[jj:, :], 'b.-')
-
-        # plt.plot(bbb, alpha=0.5)
-        # plt.plot(bbb[:, idx], 'r-')
-
-        plt.subplot(324)
-        # plt.imshow(np.sqrt(thetas[jj:, :]**2 + thetas[:jj, :]**2))
-        plt.plot(np.sum(Fs**2, axis=0), 'm.-')
-
+        plt.plot(np.reshape(bbb, (jj, mus.size * kappas.size)), alpha=0.5)
+        plt.plot(bbb[:, idx[0], idx[1]], 'r-')
+        # plt.plot(thetas[:jj, idx], 'r-')
+        # # plt.plot(thetas[jj:, :], 'b.-')
+        #
+        # # plt.plot(bbb, alpha=0.5)
+        # # plt.plot(bbb[:, idx], 'r-')
+        #
+        # plt.subplot(324)
+        # # plt.imshow(np.sqrt(thetas[jj:, :]**2 + thetas[:jj, :]**2))
+        # # plt.plot(np.sum(Fs**2, axis=0), 'm.-')
+        # plt.plot(np.sum(thetas ** 2, axis=0), 'm.-')
+        #
         plt.subplot(325)
-        plt.plot(aas, alpha=0.5)
-        plt.plot(aas[:, idx], 'r')
+        plt.plot(np.reshape(aas, (aas.shape[0], mus.size * kappas.size)), alpha=0.5)
+        plt.plot(aas[:, idx[0], idx[1]], 'r')
+        #
+        #
 
+        # print((self.y[:, None, None] - ys).shape)
 
-        plt.subplot(326)
-        plt.semilogy(GCV, 'k.-')
-        # plt.semilogy(bbb[3, :], 'r.-')
-        # plt.semilogy(aas[0, :], 'm.-')
+        plt.subplot(222)
+        plt.loglog(mus, self.m * np.sum((self.y[:, None, None] - ys)**2, axis=0).T)
 
-        # plt.semilogy(np.sum((self.D @ aas)**2, axis=0), 'g.-')
-        # plt.semilogy(np.sum((ys - self.y[:, None]) ** 2, axis=0), 'b.-')
-        plt.vlines(idx, GCV.min(), GCV.max(), colors='b')
+        plt.subplot(224)
+        plt.semilogx(mus, dof_eff.T)
+
+        # plt.subplot(326)
+        # plt.semilogy(GCV, 'k.-')
+        # plt.title(GCV[idx])
+        # # plt.semilogy(bbb[3, :], 'r.-')
+        # # plt.semilogy(aas[0, :], 'm.-')
+        #
+        # # plt.semilogy(np.sum((self.D @ aas)**2, axis=0), 'g.-')
+        # # plt.semilogy(np.sum((ys - self.y[:, None]) ** 2, axis=0), 'b.-')
+        # plt.vlines(idx, GCV.min(), GCV.max(), colors='b')
 
 
 
@@ -293,9 +480,10 @@ class DenoisePiece:
 
         # kappa = 0.01
         # nss.solve_kappa(kappa)
-
-        kappas = 10**np.linspace(-15, 3, 51)
-        nss.compute_GCV_grid(kappas)
+        mus = 10 ** np.linspace(-10, 10, 11)
+        kappas = 10 ** np.linspace(-6, 4, 11)
+        # kappas = np.array([0])
+        nss.compute_GCV_grid(kappas, mus)
 
         # self.ridge = LRidge(self.t, self.kappa)
         # self.ridge = LRidge_spline(self.t, 10, 3, self.kappa)
@@ -383,8 +571,9 @@ class DenoisePiece:
         fmin_actual = freq[np.argmin(np.abs(freq - fmin))]
         if np.isclose(fmin_actual, 0): fmin_actual = dfreq
         fmax_actual = freq[np.argmin(np.abs(freq - fmax))]
-
-        self.fk = np.arange(fmin_actual, fmax_actual + dfreq, dfreq )
+        nf = int((fmax_actual - fmin_actual)/dfreq*2)
+        self.fk = np.linspace(fmin_actual, fmax_actual, nf+1)
+        # self.fk = np.arange(fmin_actual, fmax_actual + dfreq, dfreq )
         self.fk_size = self.fk.size
 
 
@@ -605,7 +794,7 @@ class LRidge_spline:
 
 class SpectrumDenoising:
 
-    def __init__(self, t, y, w=0.07):
+    def __init__(self, t, y, w=0.05):
         self.t = t - t.min()
         self.y = y
 
@@ -624,7 +813,7 @@ class SpectrumDenoising:
             #        for idy_cen in range(16750-10, 16750+10): # mono glitch
         self.y_smooth = np.zeros(self.y.size)
         # for i in range(self.nw):
-        for i in [76]:
+        for i in [1]:
             cur_time = time.time_ns()
             idxs = self.choose_piece(i)
             # piece = DenoisePiece(self.t[idys], self.y[idys], self.p, self.kappa)
