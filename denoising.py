@@ -156,7 +156,7 @@ from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 unused import
 
 
 class NonlinearSemiparametricSolver:
-    def __init__(self, t, y, _F, _gradF, theta0, dof=5, deg=3, ndiff=2):
+    def __init__(self, t, y, _F, _gradF, dof=5, deg=3, ndiff=1):
         assert t.size == y.size, 't and y mist have the same size'
 
         self.t = t
@@ -168,7 +168,7 @@ class NonlinearSemiparametricSolver:
         self._F = _F
         self._gradF = _gradF
 
-        self.theta0 = theta0
+        # self.theta0 = theta0
 
         str_input = f"bs(x, df={dof}, degree={deg}, include_intercept=True) - 1"
         self.A = dmatrix(str_input, {"x": t})
@@ -188,7 +188,7 @@ class NonlinearSemiparametricSolver:
     def y_theta(self, theta):
         return self.y - self.F(theta)
 
-    def _update_B(self, kappa, mu):
+    def _update_B(self, kappa, mu, theta0_size):
         self.Apinv,_,_,_ = np.linalg.lstsq(self.A.T @ self.A +  mu * self.D.T @ self.D, self.A.T, rcond=-1)
         _Im = np.eye(self.m)
         # _om = np.zeros((self.m, self.m))
@@ -196,9 +196,9 @@ class NonlinearSemiparametricSolver:
         #                          [_om.T, np.sqrt(self.m * kappa) * _Im]])
 
         bbb = np.vstack((_Im - self.A @ self.Apinv,
-                         np.sqrt( mu) * (self.D @ self.Apinv)))
+                         np.sqrt(mu) * (self.D @ self.Apinv)))
 
-        _Ip = np.eye(self.theta0.size)
+        _Ip = np.eye(theta0_size)
         # _Ip = np.eye(self.m)
         _om_1 = np.zeros((bbb.shape[0], _Ip.shape[1]))
         _om_2 = np.zeros((_Ip.shape[0], bbb.shape[1]))
@@ -216,9 +216,9 @@ class NonlinearSemiparametricSolver:
         # return self.B @ np.vstack((-self.gradF(theta), self.gradF(theta)))
         return self.B @ np.vstack((-self.gradF(theta), np.eye(theta.size)))
 
-    def solve_kappa(self, kappa, mu):
-        self._update_B(kappa, mu)
-        result = least_squares(self.resid_theta, self.theta0,
+    def solve_kappa(self, kappa, mu, theta0):
+        self._update_B(kappa, mu, theta0.size)
+        result = least_squares(self.resid_theta, theta0,
                                method='lm', jac=self.jac_resid_theta)
         theta_solved = result['x']
         a_solved = self.Apinv @ self.y_theta(theta_solved)
@@ -244,7 +244,7 @@ class NonlinearSemiparametricSolver:
         m22 = self.A.T @ self.A +  mu * self.D.T @ self.D
         # print(m11.shape, m12.shape)
         # print(m12.T.shape, m22.shape)
-        self.theta0 = theta_solved
+
         H_solved = np.block([[m11,   m12],
                             [m12.T, m22]])
         S_solved = T_solved @ np.linalg.pinv(H_solved) @ T_solved.T
@@ -253,11 +253,13 @@ class NonlinearSemiparametricSolver:
         dof_eff = np.trace(np.eye(self.m) - S_solved)
         print(kappa, mu, self.m, np.trace(S_solved), theta_solved.size+a_solved.size, np.linalg.matrix_rank(H_solved))
 
+
+
         return theta_solved, a_solved, y_solved, F_solved, g_solved, GCV_solved, dof_eff
 
 
-    def compute_GCV_grid(self, kappas, mus):
-        thetas = np.zeros((self.theta0.size, kappas.size, mus.size))
+    def compute_GCV_grid(self, kappas, mus, theta0):
+        thetas = np.zeros((theta0.size, kappas.size, mus.size))
         aas = np.zeros((self.A.shape[1], kappas.size, mus.size))
         GCV = np.zeros((kappas.size, mus.size))
         dof_eff = np.zeros((kappas.size, mus.size))
@@ -265,8 +267,13 @@ class NonlinearSemiparametricSolver:
         Fs = np.zeros((self.t.size, kappas.size, mus.size))
         gs = np.zeros((self.t.size, kappas.size, mus.size))
         for i, kappa in enumerate(kappas):
+            if i>0:
+                theta0 = theta0_hold
             for j, mu in enumerate(mus):
-                thetas[:, i, j], aas[:, i, j], ys[:, i, j], Fs[:, i, j], gs[:, i, j], GCV[i, j], dof_eff[i, j] = self.solve_kappa(kappa, mu)
+                thetas[:, i, j], aas[:, i, j], ys[:, i, j], Fs[:, i, j], gs[:, i, j], GCV[i, j], dof_eff[i, j] = self.solve_kappa(kappa, mu, theta0)
+                theta0 = thetas[:, i, j]
+                if j==0:
+                   theta0_hold = theta0
 
         # idx = np.argmin(GCV)
         idx = np.unravel_index(np.argmin(GCV, axis=None), GCV.shape)
@@ -298,7 +305,7 @@ class NonlinearSemiparametricSolver:
         # plt.imshow(Fs)
         #
         #
-        jj = int(self.theta0.size/2)
+        jj = int(theta0.size/2)
         #
         bbb = np.sqrt(thetas[jj:, :, :]**2 + thetas[:jj, :, :]**2)
         plt.subplot(323)
@@ -328,6 +335,8 @@ class NonlinearSemiparametricSolver:
 
         plt.subplot(224)
         plt.semilogx(mus, dof_eff.T)
+
+        print('best hyper parameters:', kappas[idx[0]], mus[idx[1]])
 
         # plt.subplot(326)
         # plt.semilogy(GCV, 'k.-')
@@ -476,14 +485,16 @@ class DenoisePiece:
         # plt.plot(self.t, self._F(self.theta0, self.t)+y_base)
 
 
-        nss = NonlinearSemiparametricSolver(self.t, self.y, self._F, self._gradF, self.theta0)
+        nss = NonlinearSemiparametricSolver(self.t, self.y, self._F, self._gradF)
 
         # kappa = 0.01
         # nss.solve_kappa(kappa)
-        mus = 10 ** np.linspace(-10, 10, 11)
-        kappas = 10 ** np.linspace(-6, 4, 11)
+        mus = 10 ** np.linspace(-10, 10, 21)
+        kappas = 10 ** np.linspace(-10, 10, 21)
         # kappas = np.array([0])
-        nss.compute_GCV_grid(kappas, mus)
+        # mus  = np.array([0])
+
+        nss.compute_GCV_grid(kappas, mus, self.theta0)
 
         # self.ridge = LRidge(self.t, self.kappa)
         # self.ridge = LRidge_spline(self.t, 10, 3, self.kappa)
@@ -571,7 +582,7 @@ class DenoisePiece:
         fmin_actual = freq[np.argmin(np.abs(freq - fmin))]
         if np.isclose(fmin_actual, 0): fmin_actual = dfreq
         fmax_actual = freq[np.argmin(np.abs(freq - fmax))]
-        nf = int((fmax_actual - fmin_actual)/dfreq*2)
+        nf = int((fmax_actual - fmin_actual)/dfreq*1.25)
         self.fk = np.linspace(fmin_actual, fmax_actual, nf+1)
         # self.fk = np.arange(fmin_actual, fmax_actual + dfreq, dfreq )
         self.fk_size = self.fk.size
@@ -813,9 +824,9 @@ class SpectrumDenoising:
             #        for idy_cen in range(16750-10, 16750+10): # mono glitch
         self.y_smooth = np.zeros(self.y.size)
         # for i in range(self.nw):
-        for i in [1]:
+        for i in [0]:
             cur_time = time.time_ns()
-            idxs = self.choose_piece(i)
+            idxs = np.where(self.choose_piece(i))[0]+0
             # piece = DenoisePiece(self.t[idys], self.y[idys], self.p, self.kappa)
             plt.figure(99)
             plt.clf()
